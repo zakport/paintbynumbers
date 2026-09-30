@@ -110,3 +110,65 @@ test('region detail makes a visibly finer page', async ({ page }) => {
   expect(highRegions).toBeGreaterThan(lowRegions * 1.4);
   expect(changedFraction).toBeGreaterThan(0.03);
 });
+
+test('grey darkness updates the numbered page without rebuilding regions', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Try a sample' }).click();
+  await expect(page.locator('.region-badge')).toBeVisible();
+  await expect(page.locator('.processing-overlay')).toBeHidden();
+  const badge = await page.locator('.region-badge').textContent();
+  const darkness = page.getByRole('slider', { name: 'Grey darkness' });
+  const darkestInk = async () => page.getByRole('img', { name: 'Numbered pencil-by-number template' }).evaluate(async (preview) => {
+    const image = new Image(); image.src = (preview as HTMLImageElement).src; await image.decode();
+    const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+    const ctx = canvas.getContext('2d')!; ctx.drawImage(image, 0, 0);
+    const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    let darkest = 255;
+    for (let at = 0; at < pixels.length; at += 4) darkest = Math.min(darkest, pixels[at]);
+    return darkest;
+  });
+
+  await darkness.focus();
+  await darkness.press('Home');
+  await expect(darkness).toHaveValue('0');
+  const light = await darkestInk();
+  await page.getByRole('tab', { name: 'Color preview' }).click();
+  const lightColorPreview = await page.getByRole('img', { name: 'Estimated finished color result' }).getAttribute('src');
+  await page.getByRole('tab', { name: 'Numbered page' }).click();
+  await darkness.press('End');
+  await expect(darkness).toHaveValue('100');
+  const dark = await darkestInk();
+  expect(dark).toBeLessThan(light - 80);
+  await page.getByRole('tab', { name: 'Color preview' }).click();
+  await expect(page.getByRole('img', { name: 'Estimated finished color result' })).not.toHaveAttribute('src', lightColorPreview!);
+  expect(await page.locator('.region-badge').textContent()).toBe(badge);
+  await expect(page.locator('.processing-overlay')).toBeHidden();
+});
+
+test('a detail circle can be drawn and cleared on the photo', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Try a sample' }).click();
+  await expect(page.locator('.region-badge')).toBeVisible();
+  await page.getByRole('button', { name: 'Add detail circle' }).click();
+  await expect(page.getByRole('tab', { name: 'Original photo' })).toHaveAttribute('aria-selected', 'true');
+  const photo = page.getByRole('img', { name: 'Cropped original photo' });
+  const bounds = await photo.boundingBox();
+  if (!bounds) throw new Error('Original photo is missing');
+  await page.mouse.move(bounds.x + bounds.width * 0.5, bounds.y + bounds.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x + bounds.width * 0.65, bounds.y + bounds.height * 0.5, { steps: 5 });
+  await page.mouse.up();
+  await expect(page.locator('.detail-circle-overlay circle')).toHaveCount(1);
+  await expect(page.getByText('1 detail circle selected.')).toBeVisible();
+  await expect(page.locator('.processing-overlay')).toBeVisible();
+  await expect(page.locator('.processing-overlay')).toBeHidden();
+  await page.getByRole('tab', { name: 'Numbered page' }).click();
+  await expect(page.locator('.detail-circle-overlay circle')).toHaveCount(0);
+  await page.getByRole('tab', { name: 'Color preview' }).click();
+  await expect(page.locator('.detail-circle-overlay circle')).toHaveCount(0);
+  await page.getByRole('tab', { name: 'Original photo' }).click();
+  await expect(page.locator('.detail-circle-overlay circle')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Clear circles' }).click();
+  await expect(page.locator('.detail-circle-overlay circle')).toHaveCount(0);
+});

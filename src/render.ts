@@ -24,7 +24,12 @@ function simplifyLoop(points: Point[]): Point[] {
   return current;
 }
 
-function drawSmoothOutlines(ctx: CanvasRenderingContext2D, result: TemplateResult): void {
+function grey(value: number, light: number, dark: number): string {
+  const shade = Math.round(light + (dark - light) * Math.max(0, Math.min(100, value)) / 100);
+  return `rgb(${shade}, ${shade}, ${shade})`;
+}
+
+function drawSmoothOutlines(ctx: CanvasRenderingContext2D, result: TemplateResult, darkness: number, onColor = false): void {
   const { width, height, regionIds } = result;
   const edgeLists: Edge[][] = Array.from({ length: result.regions.length }, () => []);
   const addEdge = (id: number, sx: number, sy: number, ex: number, ey: number) => {
@@ -40,7 +45,7 @@ function drawSmoothOutlines(ctx: CanvasRenderingContext2D, result: TemplateResul
       if (x === 0 || regionIds[at - 1] !== id) addEdge(id, x, y + 1, x, y);
     }
   }
-  ctx.strokeStyle = '#999999';
+  ctx.strokeStyle = grey(darkness, 216, 90);
   ctx.lineWidth = 0.55;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
@@ -76,7 +81,31 @@ function drawSmoothOutlines(ctx: CanvasRenderingContext2D, result: TemplateResul
       }
       ctx.closePath();
     }
+    if (onColor) {
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.92)';
+      ctx.lineWidth = 1.8;
+      ctx.stroke();
+      ctx.strokeStyle = grey(darkness, 216, 90);
+      ctx.lineWidth = 0.55;
+    }
     ctx.stroke();
+  }
+}
+
+function drawNumbers(ctx: CanvasRenderingContext2D, result: TemplateResult, darkness: number, onColor = false): void {
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = grey(darkness, 188, 50);
+  const fontSize = Math.max(5.5, Math.min(result.width, result.height) * 0.012);
+  for (const region of result.regions) {
+    if (region.pencilIndex < 0) continue;
+    ctx.font = `600 ${Math.min(fontSize, Math.max(2.5, region.radius * 1.1))}px Arial, sans-serif`;
+    if (onColor) {
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+      ctx.lineWidth = 2.2;
+      ctx.strokeText(String(region.pencilIndex + 1), region.x + 0.5, region.y + 0.5);
+    }
+    ctx.fillText(String(region.pencilIndex + 1), region.x + 0.5, region.y + 0.5);
   }
 }
 
@@ -93,22 +122,14 @@ function makeCanvas(width: number, height: number, longEdge: number): { canvas: 
   return { canvas, ctx };
 }
 
-export function renderTemplate(result: TemplateResult, longEdge = 1600): HTMLCanvasElement {
+export function renderTemplate(result: TemplateResult, longEdge = 1600, darkness = 50): HTMLCanvasElement {
   const { canvas, ctx } = makeCanvas(result.width, result.height, longEdge);
-  drawSmoothOutlines(ctx, result);
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#777777';
-  const fontSize = Math.max(5.5, Math.min(result.width, result.height) * 0.012);
-  for (const region of result.regions) {
-    if (region.pencilIndex < 0) continue;
-    ctx.font = `600 ${Math.min(fontSize, Math.max(2.5, region.radius * 1.1))}px Arial, sans-serif`;
-    ctx.fillText(String(region.pencilIndex + 1), region.x + 0.5, region.y + 0.5);
-  }
+  drawSmoothOutlines(ctx, result, darkness);
+  drawNumbers(ctx, result, darkness);
   return canvas;
 }
 
-export function renderColorPreview(result: TemplateResult, longEdge = 1600): HTMLCanvasElement {
+export function renderColorPreview(result: TemplateResult, longEdge = 1600, darkness = 50): HTMLCanvasElement {
   const low = document.createElement('canvas');
   low.width = result.width;
   low.height = result.height;
@@ -130,6 +151,9 @@ export function renderColorPreview(result: TemplateResult, longEdge = 1600): HTM
   ctx.imageSmoothingQuality = 'high';
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(low, 0, 0, canvas.width, canvas.height);
+  ctx.scale(canvas.width / result.width, canvas.height / result.height);
+  drawSmoothOutlines(ctx, result, darkness, true);
+  drawNumbers(ctx, result, darkness, true);
   return canvas;
 }
 
@@ -150,7 +174,7 @@ export function downloadCanvas(canvas: HTMLCanvasElement, filename: string): Pro
   });
 }
 
-export async function downloadPdf(result: TemplateResult, paperSize: PaperSize, filename: string): Promise<void> {
+export async function downloadPdf(result: TemplateResult, paperSize: PaperSize, filename: string, darkness = 50): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const size = paperSize === 'a4' ? [210, 297] : [215.9, 279.4];
   const landscape = result.width > result.height * 1.15;
@@ -169,7 +193,7 @@ export async function downloadPdf(result: TemplateResult, paperSize: PaperSize, 
   const scale = Math.min(imageWidth / result.width, imageHeight / result.height);
   const drawWidth = result.width * scale;
   const drawHeight = result.height * scale;
-  const template = renderTemplate(result, 3200);
+  const template = renderTemplate(result, 3200, darkness);
   doc.addImage(template.toDataURL('image/png'), 'PNG', (pageWidth - drawWidth) / 2, 16 + (imageHeight - drawHeight) / 2, drawWidth, drawHeight, undefined, 'FAST');
   doc.setDrawColor(218, 221, 214);
   doc.rect((pageWidth - drawWidth) / 2, 16 + (imageHeight - drawHeight) / 2, drawWidth, drawHeight);
@@ -183,7 +207,7 @@ export async function downloadPdf(result: TemplateResult, paperSize: PaperSize, 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
   doc.text('Each number on the template uses one Prismacolor Premier pencil.', 14, 26);
-  const preview = renderColorPreview(result, 1500);
+  const preview = renderColorPreview(result, 1500, darkness);
   const previewScale = Math.min((keyWidth - 28) / result.width, 93 / result.height);
   const previewWidth = result.width * previewScale;
   const previewHeight = result.height * previewScale;

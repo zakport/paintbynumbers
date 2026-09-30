@@ -65,4 +65,21 @@ describe('photo to pencil template', () => {
     expect(at(352, 379)).not.toBe(at(336, 360));
     expect(at(337, 407)).not.toBe(at(336, 360));
   });
+
+  it('preserves small regions inside a detail circle without changing equally small regions outside', () => {
+    const width = 200;
+    const height = 200;
+    const image = picture(width, height, (x, y) => {
+      const smallPatch = (center: number) => Math.abs(x - center) <= 2 && Math.abs(y - 100) <= 2;
+      return smallPatch(60) || smallPatch(140) ? [25, 80, 170] : [205, 39, 44];
+    });
+    const coarse = generateTemplate(image, width, height, { ...settings, detail: 0 });
+    const focused = generateTemplate(image, width, height, { ...settings, detail: 0 }, [{ x: 0.3, y: 0.5, radius: 0.15 }]);
+    const at = (result: typeof coarse, x: number, y: number) => result.pixels[y * width + x];
+
+    expect(at(coarse, 60, 100)).toBe(at(coarse, 50, 100));
+    expect(at(focused, 60, 100)).not.toBe(at(focused, 50, 100));
+    expect(at(focused, 140, 100)).toBe(at(focused, 130, 100));
+    expect(focused.regions.length).toBeGreaterThan(coarse.regions.length);
+  });
 });

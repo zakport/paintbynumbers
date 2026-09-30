@@ -1,5 +1,12 @@
 export type PaperSize = 'a4' | 'letter';
 
+// Coordinates are relative to the cropped image; radius is relative to its shorter side.
+export interface FocusCircle {
+  x: number;
+  y: number;
+  radius: number;
+}
+
 export interface Pencil {
   name: string;
   code: string;

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type PointerEvent } from 'react';
 import { ArrowDownToLine, ArrowRight, Check, ChevronDown, Crop, Download, Image as ImageIcon, LoaderCircle, RefreshCw, SlidersHorizontal, Sparkles, UploadCloud, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { downloadCanvas, downloadPdf, renderColorPreview, renderTemplate } from './render';
-import type { Settings, TemplateResult } from './types';
+import type { FocusCircle, Settings, TemplateResult } from './types';
 
 interface CropRect { x: number; y: number; width: number; height: number }
 interface SourceImage { image: HTMLImageElement; url: string; name: string; ownedUrl: boolean }
@@ -74,6 +74,11 @@ export default function App() {
   const [crop, setCrop] = useState<CropRect>(FULL_CROP);
   const [cropOpen, setCropOpen] = useState(false);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [greyDarkness, setGreyDarkness] = useState(50);
+  const [circles, setCircles] = useState<FocusCircle[]>([]);
+  const [circleEditing, setCircleEditing] = useState(false);
+  const [draftCircle, setDraftCircle] = useState<FocusCircle | null>(null);
+  const [imageFrame, setImageFrame] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const [result, setResult] = useState<TemplateResult | null>(null);
   const [templateUrl, setTemplateUrl] = useState<string | null>(null);
   const [colorUrl, setColorUrl] = useState<string | null>(null);
@@ -86,6 +91,9 @@ export default function App() {
   const [zoomLevel, setZoomLevel] = useState(1);
   const fileInput = useRef<HTMLInputElement>(null);
   const zoomScroll = useRef<HTMLDivElement>(null);
+  const previewPaper = useRef<HTMLDivElement>(null);
+  const previewImage = useRef<HTMLImageElement>(null);
+  const circleDrag = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const sourceRef = useRef<SourceImage | null>(null);
   const requestId = useRef(0);
 
@@ -105,6 +113,9 @@ export default function App() {
       sourceRef.current = next;
       setSource(next);
       setCrop(FULL_CROP);
+      setCircles([]);
+      setCircleEditing(false);
+      setDraftCircle(null);
       setView('template');
       setZoomOpen(false);
       setResult(null);
@@ -131,6 +142,53 @@ export default function App() {
     setSettings((current) => ({ ...current, [key]: value }));
   }
 
+  function updateImageFrame() {
+    if (!previewPaper.current || !previewImage.current) return;
+    const paper = previewPaper.current.getBoundingClientRect();
+    const image = previewImage.current.getBoundingClientRect();
+    setImageFrame({ left: image.left - paper.left, top: image.top - paper.top, width: image.width, height: image.height });
+  }
+
+  function circlePoint(event: PointerEvent<HTMLImageElement>): { x: number; y: number; radiusScale: number } {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width)),
+      y: Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height)),
+      radiusScale: Math.min(bounds.width, bounds.height),
+    };
+  }
+
+  function beginCircle(event: PointerEvent<HTMLImageElement>) {
+    if (!circleEditing) return;
+    event.preventDefault();
+    const point = circlePoint(event);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    circleDrag.current = { pointerId: event.pointerId, x: point.x, y: point.y };
+    setDraftCircle({ x: point.x, y: point.y, radius: 0.02 });
+  }
+
+  function moveCircle(event: PointerEvent<HTMLImageElement>) {
+    if (!circleDrag.current || circleDrag.current.pointerId !== event.pointerId) return;
+    const point = circlePoint(event);
+    const { x, y } = circleDrag.current;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const radius = Math.hypot((point.x - x) * bounds.width, (point.y - y) * bounds.height) / point.radiusScale;
+    setDraftCircle({ x, y, radius: Math.min(1, radius) });
+  }
+
+  function endCircle(event: PointerEvent<HTMLImageElement>) {
+    if (!circleDrag.current || circleDrag.current.pointerId !== event.pointerId) return;
+    const point = circlePoint(event);
+    const { x, y } = circleDrag.current;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const draggedRadius = Math.hypot((point.x - x) * bounds.width, (point.y - y) * bounds.height) / point.radiusScale;
+    circleDrag.current = null;
+    setDraftCircle(null);
+    setCircleEditing(false);
+    if (event.type === 'pointercancel') return;
+    setCircles((current) => [...current, { x, y, radius: draggedRadius < 0.025 ? 0.16 : Math.min(1, draggedRadius) }]);
+  }
+
   useEffect(() => {
     if (!source) return;
     const id = ++requestId.current;
@@ -142,7 +200,7 @@ export default function App() {
       const naturalHeight = source.image.naturalHeight;
       const croppedWidth = naturalWidth * crop.width;
       const croppedHeight = naturalHeight * crop.height;
-      const workingLongEdge = 420 + settings.detail * 4;
+      const workingLongEdge = Math.max(420 + settings.detail * 4, circles.length ? 820 : 0);
       const scale = Math.min(1, workingLongEdge / Math.max(croppedWidth, croppedHeight));
       const width = Math.max(1, Math.round(croppedWidth * scale));
       const height = Math.max(1, Math.round(croppedHeight * scale));
@@ -169,8 +227,6 @@ export default function App() {
         try {
           const generated = event.data.result;
           setResult(generated);
-          setTemplateUrl(renderTemplate(generated, 1450).toDataURL('image/png'));
-          setColorUrl(renderColorPreview(generated, 1450).toDataURL('image/png'));
         } catch (renderError) {
           setError(renderError instanceof Error ? renderError.message : 'Could not render the template.');
         } finally {
@@ -179,16 +235,25 @@ export default function App() {
         }
       };
       worker.onerror = () => { setError('Image processing failed. Try a smaller photo.'); setProcessing(false); worker?.terminate(); };
-      worker.postMessage({ id, rgba, width, height, settings }, [rgba.buffer]);
+      worker.postMessage({ id, rgba, width, height, settings, circles }, [rgba.buffer]);
     }, 420);
     return () => { window.clearTimeout(timer); worker?.terminate(); };
-  }, [source, crop, settings]);
+  }, [source, crop, settings, circles]);
+
+  useEffect(() => {
+    if (!result) { setTemplateUrl(null); setColorUrl(null); return; }
+    try {
+      setTemplateUrl(renderTemplate(result, 1450, greyDarkness).toDataURL('image/png'));
+      setColorUrl(renderColorPreview(result, 1450, greyDarkness).toDataURL('image/png'));
+    }
+    catch (renderError) { setError(renderError instanceof Error ? renderError.message : 'Could not render the template.'); }
+  }, [result, greyDarkness]);
 
   async function downloadPng(which: 'template' | 'color') {
     if (!result) return;
     setDownloadOpen(false);
     try {
-      const canvas = which === 'template' ? renderTemplate(result, 3200) : renderColorPreview(result, 3200);
+      const canvas = which === 'template' ? renderTemplate(result, 3200, greyDarkness) : renderColorPreview(result, 3200, greyDarkness);
       await downloadCanvas(canvas, `${source?.name ?? 'numbered-studio'}-${which}.png`);
     } catch (downloadError) { setError(downloadError instanceof Error ? downloadError.message : 'Could not download PNG.'); }
   }
@@ -196,11 +261,19 @@ export default function App() {
   async function downloadPrintable() {
     if (!result) return;
     setDownloadOpen(false);
-    try { await downloadPdf(result, settings.paperSize, `${source?.name ?? 'numbered-studio'}-printable.pdf`); }
+    try { await downloadPdf(result, settings.paperSize, `${source?.name ?? 'numbered-studio'}-printable.pdf`, greyDarkness); }
     catch (downloadError) { setError(downloadError instanceof Error ? downloadError.message : 'Could not create PDF.'); }
   }
 
   const displayedImage = view === 'template' ? templateUrl : view === 'color' ? colorUrl : originalUrl;
+  useEffect(() => {
+    if (!displayedImage || !previewPaper.current) return;
+    const observer = new ResizeObserver(updateImageFrame);
+    observer.observe(previewPaper.current);
+    if (previewImage.current) observer.observe(previewImage.current);
+    updateImageFrame();
+    return () => observer.disconnect();
+  }, [displayedImage]);
   useEffect(() => {
     if (!zoomOpen || !zoomScroll.current) return;
     const scroller = zoomScroll.current;
@@ -221,19 +294,21 @@ export default function App() {
         <div className="control-divider" /><div className="control-title"><span className="control-number">01</span><div><h4>Color & detail</h4><p>Find the balance that feels right.</p></div></div>
         <Slider label="Maximum pencils" value={settings.maxColors} min={6} max={40} low="Simple" high="Rich color" caption="The most pencil colors your page can use." onChange={(value) => changeSetting('maxColors', value)} />
         <Slider label="Region detail" value={settings.detail} min={0} max={100} low="Larger areas" high="Fine detail" caption="For finer regions, raise this and Maximum pencils, then crop close to your subject." onChange={(value) => changeSetting('detail', value)} />
+        <Slider label="Grey darkness" value={greyDarkness} min={0} max={100} low="Lighter" high="Darker" caption="Adjust the lines and numbers on your printable page." onChange={setGreyDarkness} />
         <div className="control-divider" /><div className="control-title"><span className="control-number">02</span><div><h4>Paper size</h4><p>For a perfect fit when you print.</p></div></div><div className="paper-options"><button className={settings.paperSize === 'a4' ? 'selected' : ''} onClick={() => changeSetting('paperSize', 'a4')}><span>A4</span><small>210 × 297 mm</small></button><button className={settings.paperSize === 'letter' ? 'selected' : ''} onClick={() => changeSetting('paperSize', 'letter')}><span>US Letter</span><small>8.5 × 11 in</small></button></div>
         <div className="control-note"><Sparkles size={16} /><span>Every number maps to a real Prismacolor Premier pencil.</span></div>
       </aside>
 
       <div className="preview-panel"><div className="preview-heading"><div><span className="eyebrow">LIVE PREVIEW</span><h3>{source ? 'Your design is taking shape.' : 'Your canvas is waiting.'}</h3></div>{result && <span className="region-badge">{result.pencils.length} pencils · {result.regions.filter((region) => region.pencilIndex >= 0).length} regions</span>}</div>
         <div className="preview-tabs" role="tablist" aria-label="Preview type"><button role="tab" aria-selected={view === 'template'} className={view === 'template' ? 'active' : ''} onClick={() => setView('template')}>Numbered page</button><button role="tab" aria-selected={view === 'color'} className={view === 'color' ? 'active' : ''} onClick={() => setView('color')}>Color preview</button><button role="tab" aria-selected={view === 'original'} className={view === 'original' ? 'active' : ''} onClick={() => setView('original')}>Original photo</button></div>
-        <div className="preview-canvas">{displayedImage && <button className="preview-zoom-button" aria-label="Enlarge preview" onClick={() => { setZoomLevel(1); setZoomOpen(true); }}><ZoomIn size={16} /> Enlarge</button>}<div className="preview-paper">{displayedImage ? <img src={displayedImage} alt={view === 'template' ? 'Numbered pencil-by-number template' : view === 'color' ? 'Estimated finished color result' : 'Cropped original photo'} /> : <div className="empty-preview"><div className="empty-preview-art"><div className="empty-ring ring-one" /><div className="empty-ring ring-two" /><span>1</span><span>2</span><span>3</span></div><ImageIcon size={25} /><strong>Your next piece starts here</strong><p>Choose a photo or try our sample to see your numbered page.</p><button onClick={() => openImage(DEMO_URL, 'Milo the dog', false)}>Explore with a sample <ArrowRight size={15} /></button></div>}</div>{processing && <div className="processing-overlay"><LoaderCircle className="spin" size={28} /><strong>Finding your pencil colors…</strong><span>Making the little details just right</span></div>}</div>
+        {source && <div className="detail-toolbar"><button className={circleEditing ? 'detail-circle-button active' : 'detail-circle-button'} onClick={() => { setCircleEditing((editing) => !editing); setDraftCircle(null); circleDrag.current = null; setView('original'); }}>{circleEditing ? 'Cancel circle' : circles.length ? 'Add another detail circle' : 'Add detail circle'}</button>{circles.length > 0 && <button className="detail-clear-button" onClick={() => { setCircles([]); setCircleEditing(false); setDraftCircle(null); }}>Clear circles</button>}<span>{circleEditing ? 'Drag on the photo to choose an area, or tap to place a circle.' : circles.length ? `${circles.length} detail ${circles.length === 1 ? 'circle' : 'circles'} selected. Smaller regions are kept inside.` : 'Keep extra detail in a part of your photo.'}</span></div>}
+        <div className="preview-canvas">{displayedImage && !circleEditing && <button className="preview-zoom-button" aria-label="Enlarge preview" onClick={() => { setZoomLevel(1); setZoomOpen(true); }}><ZoomIn size={16} /> Enlarge</button>}<div className="preview-paper" ref={previewPaper}>{displayedImage ? <><img ref={previewImage} src={displayedImage} alt={view === 'template' ? 'Numbered pencil-by-number template' : view === 'color' ? 'Estimated finished color result' : 'Cropped original photo'} className={circleEditing && view === 'original' ? 'circle-editing' : ''} draggable={false} onLoad={updateImageFrame} onPointerDown={beginCircle} onPointerMove={moveCircle} onPointerUp={endCircle} onPointerCancel={endCircle} />{view === 'original' && imageFrame && (circles.length > 0 || draftCircle) && <svg className="detail-circle-overlay" aria-hidden="true" style={{ left: imageFrame.left, top: imageFrame.top, width: imageFrame.width, height: imageFrame.height }} viewBox={`0 0 ${imageFrame.width} ${imageFrame.height}`}><g>{circles.map((circle, index) => <circle key={index} cx={circle.x * imageFrame.width} cy={circle.y * imageFrame.height} r={circle.radius * Math.min(imageFrame.width, imageFrame.height)} />)}{draftCircle && <circle className="draft" cx={draftCircle.x * imageFrame.width} cy={draftCircle.y * imageFrame.height} r={draftCircle.radius * Math.min(imageFrame.width, imageFrame.height)} />}</g></svg>}</> : <div className="empty-preview"><div className="empty-preview-art"><div className="empty-ring ring-one" /><div className="empty-ring ring-two" /><span>1</span><span>2</span><span>3</span></div><ImageIcon size={25} /><strong>Your next piece starts here</strong><p>Choose a photo or try our sample to see your numbered page.</p><button onClick={() => openImage(DEMO_URL, 'Milo the dog', false)}>Explore with a sample <ArrowRight size={15} /></button></div>}</div>{processing && <div className="processing-overlay"><LoaderCircle className="spin" size={28} /><strong>Finding your pencil colors…</strong><span>Making the little details just right</span></div>}</div>
         {error && <div className="error-message" role="alert">{error}</div>}
         <div className="preview-footer"><div className="preview-tip"><span>✳</span><p>{result ? 'Your pencil swatches are digital estimates. Test colors on your paper for the closest match.' : 'Tip: clear, well-lit photos make the nicest pages.'}</p></div><div className="download-wrap"><button className="button button-primary" disabled={!result || processing} onClick={() => setDownloadOpen((open) => !open)}><Download size={17} /> Download <ChevronDown size={15} /></button>{downloadOpen && result && <div className="download-menu"><button onClick={downloadPrintable}><ArrowDownToLine size={17} /><span><strong>Printable PDF</strong><small>Numbered page + pencil key</small></span></button><button onClick={() => downloadPng('template')}><ArrowDownToLine size={17} /><span><strong>Numbered page PNG</strong><small>High resolution image</small></span></button><button onClick={() => downloadPng('color')}><ArrowDownToLine size={17} /><span><strong>Color preview PNG</strong><small>Estimated finished look</small></span></button></div>}</div></div>
       </div></div></section>
     </main>
     <footer className="site-footer"><a className="brand" href="#top"><span className="brand-mark"><span /><span /><span /><span /></span><span>numbered<span className="brand-dot">.</span><small>STUDIO</small></span></a><p>A little more color in the everyday.</p><span>Made for the joy of making.</span></footer>
     {zoomOpen && displayedImage && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setZoomOpen(false); }}><section className="zoom-dialog" role="dialog" aria-modal="true" aria-label="Enlarged preview"><div className="zoom-toolbar"><strong>{view === 'template' ? 'Numbered page' : view === 'color' ? 'Color preview' : 'Original photo'}</strong><div><button className="icon-button" aria-label="Zoom out" disabled={zoomLevel === 1} onClick={() => setZoomLevel((level) => Math.max(1, level - 1))}><ZoomOut size={19} /></button><span>{zoomLevel}×</span><button className="icon-button" aria-label="Zoom in" disabled={zoomLevel === 3} onClick={() => setZoomLevel((level) => Math.min(3, level + 1))}><ZoomIn size={19} /></button><button className="icon-button" aria-label="Close enlarged preview" onClick={() => setZoomOpen(false)}><X size={19} /></button></div></div><div className="zoom-image-scroll" ref={zoomScroll}><img src={displayedImage} alt={view === 'template' ? 'Enlarged numbered page' : view === 'color' ? 'Enlarged color preview' : 'Enlarged original photo'} style={{ width: `${zoomLevel * 100}%` }} /></div></section></div>}
-    {cropOpen && source && <CropDialog source={source} initial={crop} onClose={() => setCropOpen(false)} onApply={(nextCrop) => { setCrop(nextCrop); setCropOpen(false); }} />}
+    {cropOpen && source && <CropDialog source={source} initial={crop} onClose={() => setCropOpen(false)} onApply={(nextCrop) => { setCrop(nextCrop); setCircles([]); setCircleEditing(false); setCropOpen(false); }} />}
   </div>;
 }

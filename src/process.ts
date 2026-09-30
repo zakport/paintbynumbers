@@ -1,5 +1,5 @@
 import { isPaperWhite, labDistanceSquared, PENCIL_LABS, PENCILS, rgbToLab, type Lab } from './color';
-import type { Region, Settings, TemplateResult } from './types';
+import type { FocusCircle, Region, Settings, TemplateResult } from './types';
 
 interface Component extends Region {
   members: number[];
@@ -69,13 +69,32 @@ function findLabelCenters(items: Component[], ids: Int32Array, width: number, he
   }
 }
 
-function smoothPixels(pixels: Int16Array, width: number, height: number, passes: number): Int16Array {
+function focusMask(width: number, height: number, circles: FocusCircle[]): Uint8Array {
+  const mask = new Uint8Array(width * height);
+  if (circles.length === 0) return mask;
+  const shorter = Math.min(width, height);
+  for (const circle of circles) {
+    const cx = circle.x * width;
+    const cy = circle.y * height;
+    const radius = circle.radius * shorter;
+    const radiusSquared = radius * radius;
+    for (let y = Math.max(0, Math.floor(cy - radius)); y < Math.min(height, Math.ceil(cy + radius)); y++) {
+      for (let x = Math.max(0, Math.floor(cx - radius)); x < Math.min(width, Math.ceil(cx + radius)); x++) {
+        if ((x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2 <= radiusSquared) mask[y * width + x] = 1;
+      }
+    }
+  }
+  return mask;
+}
+
+function smoothPixels(pixels: Int16Array, width: number, height: number, passes: number, focus: Uint8Array): Int16Array {
   let current = pixels;
   for (let pass = 0; pass < passes; pass++) {
     const next = current.slice();
     for (let y = 1; y < height - 1; y++) {
       for (let x = 1; x < width - 1; x++) {
         const at = y * width + x;
+        if (focus[at]) continue;
         const votes = new Map<number, number>([[current[at], 3]]);
         for (let dy = -1; dy <= 1; dy++) {
           for (let dx = -1; dx <= 1; dx++) {
@@ -97,7 +116,7 @@ function smoothPixels(pixels: Int16Array, width: number, height: number, passes:
   return current;
 }
 
-function choosePencils(samples: Lab[], settings: Settings): number[] {
+function choosePencils(samples: Lab[], weights: number[], settings: Settings): number[] {
   if (samples.length === 0) return [];
   const candidateCount = PENCILS.length;
   const distances = PENCIL_LABS.map((pencil) => Float32Array.from(samples, (sample) => labDistanceSquared(sample, pencil)));
@@ -116,7 +135,7 @@ function choosePencils(samples: Lab[], settings: Settings): number[] {
       const candidateDistances = distances[candidate];
       let error = 0;
       for (let sample = 0; sample < samples.length; sample++) {
-        error += Math.min(bestDistances[sample], candidateDistances[sample]);
+        error += weights[sample] * Math.min(bestDistances[sample], candidateDistances[sample]);
       }
       if (error < nextError) { nextError = error; bestCandidate = candidate; }
     }
@@ -137,7 +156,7 @@ function printedPixelsPerMillimeter(width: number, height: number, paperSize: Se
   return 1 / scale;
 }
 
-function mergeSmallRegions(pixels: Int16Array, width: number, height: number, settings: Settings, selected: number[]): { pixels: Int16Array; regionIds: Int32Array; regions: Component[] } {
+function mergeSmallRegions(pixels: Int16Array, width: number, height: number, settings: Settings, selected: number[], focus: Uint8Array): { pixels: Int16Array; regionIds: Int32Array; regions: Component[] } {
   const pxPerMm = printedPixelsPerMillimeter(width, height, settings.paperSize);
   const minArea = Math.max(10, Math.round((1.3 + (100 - settings.detail) * 0.065) ** 2 * pxPerMm ** 2));
   const minRadius = Math.max(2, Math.round((0.65 + (100 - settings.detail) * 0.007) * pxPerMm));
@@ -147,7 +166,10 @@ function mergeSmallRegions(pixels: Int16Array, width: number, height: number, se
     findLabelCenters(result.items, result.ids, width, height);
     let changed = false;
     for (const region of result.items) {
-      if (region.area >= minArea && region.radius >= minRadius) continue;
+      const detailed = focus[region.y * width + region.x] === 1;
+      const areaLimit = detailed ? Math.max(6, Math.round(minArea * 0.12)) : minArea;
+      const radiusLimit = detailed ? Math.max(1, Math.round(minRadius * 0.35)) : minRadius;
+      if (region.area >= areaLimit && region.radius >= radiusLimit) continue;
       const neighbors = new Map<number, number>();
       for (const at of region.members) {
         const x = at % width;
@@ -179,19 +201,24 @@ function mergeSmallRegions(pixels: Int16Array, width: number, height: number, se
   return { pixels, regionIds: result.ids, regions: result.items };
 }
 
-export function generateTemplate(rgba: Uint8ClampedArray, width: number, height: number, settings: Settings): TemplateResult {
+export function generateTemplate(rgba: Uint8ClampedArray, width: number, height: number, settings: Settings, circles: FocusCircle[] = []): TemplateResult {
   if (width <= 0 || height <= 0 || rgba.length !== width * height * 4) throw new Error('Invalid image data');
+  const focus = focusMask(width, height, circles);
   const stride = Math.max(1, Math.floor(Math.sqrt(width * height / 7000)));
   const samples: Lab[] = [];
+  const weights: number[] = [];
   for (let y = 0; y < height; y += stride) {
     for (let x = 0; x < width; x += stride) {
       const at = (y * width + x) * 4;
       const alpha = rgba[at + 3] / 255;
       const lab = rgbToLab(rgba[at] * alpha + 255 * (1 - alpha), rgba[at + 1] * alpha + 255 * (1 - alpha), rgba[at + 2] * alpha + 255 * (1 - alpha));
-      if (!isPaperWhite(lab)) samples.push(lab);
+      if (!isPaperWhite(lab)) {
+        samples.push(lab);
+        weights.push(focus[y * width + x] ? 8 : 1);
+      }
     }
   }
-  const selected = choosePencils(samples, settings);
+  const selected = choosePencils(samples, weights, settings);
   let pixels: Int16Array = new Int16Array(width * height);
   for (let at = 0; at < pixels.length; at++) {
     const offset = at * 4;
@@ -206,8 +233,8 @@ export function generateTemplate(rgba: Uint8ClampedArray, width: number, height:
     }
     pixels[at] = best;
   }
-  pixels = smoothPixels(pixels, width, height, Math.max(0, Math.round(3 - settings.detail * 0.03)));
-  const cleaned = mergeSmallRegions(pixels, width, height, settings, selected);
+  pixels = smoothPixels(pixels, width, height, Math.max(0, Math.round(3 - settings.detail * 0.03)), focus);
+  const cleaned = mergeSmallRegions(pixels, width, height, settings, selected, focus);
   const used = new Set(cleaned.pixels);
   const kept = selected.filter((_, index) => used.has(index));
   const remap = new Map<number, number>();
