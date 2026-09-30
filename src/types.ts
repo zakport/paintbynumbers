@@ -8,7 +8,6 @@ export interface Pencil {
 
 export interface Settings {
   maxColors: number;
-  separation: number;
   detail: number;
   paperSize: PaperSize;
 }

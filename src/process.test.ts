@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { labDistanceSquared, PENCIL_LABS, PENCILS } from './color';
 import { generateTemplate } from './process';
 import type { Settings } from './types';
 
-const settings: Settings = { maxColors: 8, separation: 35, detail: 50, paperSize: 'a4' };
+const settings: Settings = { maxColors: 8, detail: 50, paperSize: 'a4' };
 
 function picture(width: number, height: number, colorAt: (x: number, y: number) => [number, number, number]): Uint8ClampedArray {
   const rgba = new Uint8ClampedArray(width * height * 4);
@@ -36,20 +35,34 @@ describe('photo to pencil template', () => {
     }
   });
 
-  it('uses only visibly separated pencil colors when separation is high', () => {
-    const image = picture(120, 80, (x, y) => [80 + Math.floor(x * 1.3), 45 + Math.floor(y * 1.4), 90 + Math.floor((x + y) * 0.4)]);
-    const result = generateTemplate(image, 120, 80, { ...settings, maxColors: 20, separation: 100 });
-    const ids = result.pencils.map((pencil) => PENCILS.findIndex((entry) => entry.code === pencil.code));
-    for (let first = 0; first < ids.length; first++) {
-      for (let second = first + 1; second < ids.length; second++) {
-        expect(Math.sqrt(labDistanceSquared(PENCIL_LABS[ids[first]], PENCIL_LABS[ids[second]]))).toBeGreaterThanOrEqual(26);
-      }
-    }
-  });
-
   it('produces a blank page for an entirely white image', () => {
     const result = generateTemplate(picture(40, 30, () => [255, 255, 255]), 40, 30, settings);
     expect(result.pencils).toHaveLength(0);
     expect(result.pixels.every((pixel) => pixel === -1)).toBe(true);
+  });
+
+  it('keeps small facial features in a full-page photo at high detail', () => {
+    const width = 460;
+    const height = 820;
+    const image = picture(width, height, (x, y) => {
+      const stripe = Math.round(11 * Math.sin(x / 24 + y / 31));
+      if (y > 520) return [60 + stripe, 83 + stripe, 103 + stripe];
+      if (y > 265) {
+        const wave = Math.round(15 * Math.sin(x / 19 + y / 23));
+        if ((x - 336) ** 2 / 57 ** 2 + (y - 377) ** 2 / 58 ** 2 < 1) {
+          if ((x - 318) ** 2 / 5 ** 2 + (y - 379) ** 2 / 3 ** 2 < 1) return [118, 72, 67];
+          if ((x - 352) ** 2 / 5 ** 2 + (y - 379) ** 2 / 3 ** 2 < 1) return [118, 72, 67];
+          if ((x - 337) ** 2 / 14 ** 2 + (y - 407) ** 2 / 3 ** 2 < 1) return [135, 80, 78];
+          return [185 + Math.round((x - 336) / 11), 142 + Math.round((y - 377) / 15), 131];
+        }
+        return [178 + wave, 182 + wave, 186 + wave];
+      }
+      return [115 + stripe, 124 + stripe, 129 + stripe];
+    });
+    const result = generateTemplate(image, width, height, { ...settings, maxColors: 40, detail: 100 });
+    const at = (x: number, y: number) => result.pixels[y * width + x];
+    expect(at(318, 379)).not.toBe(at(336, 360));
+    expect(at(352, 379)).not.toBe(at(336, 360));
+    expect(at(337, 407)).not.toBe(at(336, 360));
   });
 });

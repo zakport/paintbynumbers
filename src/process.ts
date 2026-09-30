@@ -104,9 +104,10 @@ function choosePencils(samples: Lab[], settings: Settings): number[] {
   const bestDistances = new Float32Array(samples.length).fill(Infinity);
   const selected: number[] = [];
   let currentError = Infinity;
-  const minDistance = 5 + settings.separation * 0.21;
+  const minDistance = 5;
 
-  for (let round = 0; round < settings.maxColors; round++) {
+  const targetColors = Math.max(3, Math.round(settings.maxColors * (0.35 + 0.65 * settings.detail / 100)));
+  for (let round = 0; round < targetColors; round++) {
     let bestCandidate = -1;
     let nextError = Infinity;
     for (let candidate = 0; candidate < candidateCount; candidate++) {
@@ -119,7 +120,7 @@ function choosePencils(samples: Lab[], settings: Settings): number[] {
       }
       if (error < nextError) { nextError = error; bestCandidate = candidate; }
     }
-    if (bestCandidate < 0 || (round > 0 && currentError - nextError < currentError * 0.003)) break;
+    if (bestCandidate < 0 || (round > 0 && currentError - nextError <= 0)) break;
     selected.push(bestCandidate);
     currentError = nextError;
     const newDistances = distances[bestCandidate];
@@ -138,8 +139,8 @@ function printedPixelsPerMillimeter(width: number, height: number, paperSize: Se
 
 function mergeSmallRegions(pixels: Int16Array, width: number, height: number, settings: Settings, selected: number[]): { pixels: Int16Array; regionIds: Int32Array; regions: Component[] } {
   const pxPerMm = printedPixelsPerMillimeter(width, height, settings.paperSize);
-  const minArea = Math.max(10, Math.round((2.3 + (100 - settings.detail) * 0.055) ** 2 * pxPerMm ** 2));
-  const minRadius = Math.max(2, Math.round(1.35 * pxPerMm));
+  const minArea = Math.max(10, Math.round((1.3 + (100 - settings.detail) * 0.065) ** 2 * pxPerMm ** 2));
+  const minRadius = Math.max(2, Math.round((0.65 + (100 - settings.detail) * 0.007) * pxPerMm));
   let result = components(pixels, width, height);
 
   for (let pass = 0; pass < 18; pass++) {
@@ -205,7 +206,7 @@ export function generateTemplate(rgba: Uint8ClampedArray, width: number, height:
     }
     pixels[at] = best;
   }
-  pixels = smoothPixels(pixels, width, height, settings.detail < 34 ? 3 : settings.detail < 70 ? 2 : 1);
+  pixels = smoothPixels(pixels, width, height, Math.max(0, Math.round(3 - settings.detail * 0.03)));
   const cleaned = mergeSmallRegions(pixels, width, height, settings, selected);
   const used = new Set(cleaned.pixels);
   const kept = selected.filter((_, index) => used.has(index));

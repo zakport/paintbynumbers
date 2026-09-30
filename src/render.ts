@@ -102,7 +102,7 @@ export function renderTemplate(result: TemplateResult, longEdge = 1600): HTMLCan
   const fontSize = Math.max(5.5, Math.min(result.width, result.height) * 0.012);
   for (const region of result.regions) {
     if (region.pencilIndex < 0) continue;
-    ctx.font = `600 ${Math.min(fontSize, Math.max(4.5, region.radius * 1.1))}px Arial, sans-serif`;
+    ctx.font = `600 ${Math.min(fontSize, Math.max(2.5, region.radius * 1.1))}px Arial, sans-serif`;
     ctx.fillText(String(region.pencilIndex + 1), region.x + 0.5, region.y + 0.5);
   }
   return canvas;
