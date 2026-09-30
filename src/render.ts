@@ -40,7 +40,7 @@ function drawSmoothOutlines(ctx: CanvasRenderingContext2D, result: TemplateResul
       if (x === 0 || regionIds[at - 1] !== id) addEdge(id, x, y + 1, x, y);
     }
   }
-  ctx.strokeStyle = '#69716c';
+  ctx.strokeStyle = '#999999';
   ctx.lineWidth = 0.55;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
@@ -98,7 +98,7 @@ export function renderTemplate(result: TemplateResult, longEdge = 1600): HTMLCan
   drawSmoothOutlines(ctx, result);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#4b5550';
+  ctx.fillStyle = '#777777';
   const fontSize = Math.max(5.5, Math.min(result.width, result.height) * 0.012);
   for (const region of result.regions) {
     if (region.pencilIndex < 0) continue;

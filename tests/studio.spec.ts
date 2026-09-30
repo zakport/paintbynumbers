@@ -8,6 +8,31 @@ test('sample image becomes a printable page and matching downloads', async ({ pa
   await page.getByRole('button', { name: 'Try a sample' }).click();
   await expect(page.locator('.region-badge')).toContainText(/\d+ pencils · \d+ regions/);
   await expect(page.getByRole('img', { name: 'Numbered pencil-by-number template' })).toBeVisible();
+  const templateInk = await page.getByRole('img', { name: 'Numbered pencil-by-number template' }).evaluate(async (preview) => {
+    const image = new Image();
+    image.src = (preview as HTMLImageElement).src;
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext('2d')!;
+    context.drawImage(image, 0, 0);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    let darkest = 255;
+    let coloredPixels = 0;
+    for (let at = 0; at < pixels.length; at += 4) {
+      const red = pixels[at];
+      const green = pixels[at + 1];
+      const blue = pixels[at + 2];
+      if (red < 230) {
+        darkest = Math.min(darkest, red, green, blue);
+        if (red !== green || green !== blue) coloredPixels++;
+      }
+    }
+    return { darkest, coloredPixels };
+  });
+  expect(templateInk.darkest).toBeGreaterThanOrEqual(115);
+  expect(templateInk.coloredPixels).toBe(0);
 
   await page.getByRole('tab', { name: 'Color preview' }).click();
   await expect(page.getByRole('img', { name: 'Estimated finished color result' })).toBeVisible();
