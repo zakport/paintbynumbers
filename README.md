@@ -21,6 +21,10 @@ npm run build
 
 The browser test uses Playwright Chromium. If it is not installed yet, run `npx playwright install chromium`.
 
+## Hosted site
+
+GitHub Actions builds and publishes the `main` branch to [GitHub Pages](https://zakport.github.io/paintbynumbers/). The workflow uses Vite's `pages` mode so assets load from `/paintbynumbers/`. Each push to `main` updates the site; the laptop does not need to stay on. Uploaded photos remain in the visitor's browser.
+
 ## How the conversion works
 
 The app samples the cropped image, selects at most the requested number of Prismacolor pencils, assigns each pixel to one pencil, smooths isolated pixels, and merges regions too small for a number. The detail control changes working resolution, how many of the allowed pencils are used, smoothing, and the minimum region area and radius. It traces the remaining regions for the outline and places each label inside its region. Near-white image areas use the white paper and need no pencil.
