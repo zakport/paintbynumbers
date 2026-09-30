@@ -75,6 +75,7 @@ export default function App() {
   const [cropOpen, setCropOpen] = useState(false);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [greyDarkness, setGreyDarkness] = useState(50);
+  const [showColorAnnotations, setShowColorAnnotations] = useState(true);
   const [circles, setCircles] = useState<FocusCircle[]>([]);
   const [circleEditing, setCircleEditing] = useState(false);
   const [draftCircle, setDraftCircle] = useState<FocusCircle | null>(null);
@@ -244,16 +245,16 @@ export default function App() {
     if (!result) { setTemplateUrl(null); setColorUrl(null); return; }
     try {
       setTemplateUrl(renderTemplate(result, 1450, greyDarkness).toDataURL('image/png'));
-      setColorUrl(renderColorPreview(result, 1450, greyDarkness).toDataURL('image/png'));
+      setColorUrl(renderColorPreview(result, 1450, greyDarkness, showColorAnnotations).toDataURL('image/png'));
     }
     catch (renderError) { setError(renderError instanceof Error ? renderError.message : 'Could not render the template.'); }
-  }, [result, greyDarkness]);
+  }, [result, greyDarkness, showColorAnnotations]);
 
   async function downloadPng(which: 'template' | 'color') {
     if (!result) return;
     setDownloadOpen(false);
     try {
-      const canvas = which === 'template' ? renderTemplate(result, 3200, greyDarkness) : renderColorPreview(result, 3200, greyDarkness);
+      const canvas = which === 'template' ? renderTemplate(result, 3200, greyDarkness) : renderColorPreview(result, 3200, greyDarkness, showColorAnnotations);
       await downloadCanvas(canvas, `${source?.name ?? 'numbered-studio'}-${which}.png`);
     } catch (downloadError) { setError(downloadError instanceof Error ? downloadError.message : 'Could not download PNG.'); }
   }
@@ -261,7 +262,7 @@ export default function App() {
   async function downloadPrintable() {
     if (!result) return;
     setDownloadOpen(false);
-    try { await downloadPdf(result, settings.paperSize, `${source?.name ?? 'numbered-studio'}-printable.pdf`, greyDarkness); }
+    try { await downloadPdf(result, settings.paperSize, `${source?.name ?? 'numbered-studio'}-printable.pdf`, greyDarkness, showColorAnnotations); }
     catch (downloadError) { setError(downloadError instanceof Error ? downloadError.message : 'Could not create PDF.'); }
   }
 
@@ -294,7 +295,8 @@ export default function App() {
         <div className="control-divider" /><div className="control-title"><span className="control-number">01</span><div><h4>Color & detail</h4><p>Find the balance that feels right.</p></div></div>
         <Slider label="Maximum pencils" value={settings.maxColors} min={6} max={40} low="Simple" high="Rich color" caption="The most pencil colors your page can use." onChange={(value) => changeSetting('maxColors', value)} />
         <Slider label="Region detail" value={settings.detail} min={0} max={100} low="Larger areas" high="Fine detail" caption="For finer regions, raise this and Maximum pencils, then crop close to your subject." onChange={(value) => changeSetting('detail', value)} />
-        <Slider label="Grey darkness" value={greyDarkness} min={0} max={100} low="Lighter" high="Darker" caption="Adjust the lines and numbers on your printable page." onChange={setGreyDarkness} />
+        <Slider label="Grey darkness" value={greyDarkness} min={0} max={100} low="Lighter" high="Darker" caption="Adjust the shade of lines and numbers on both views." onChange={setGreyDarkness} />
+        <label className="preview-annotation-toggle"><input type="checkbox" checked={showColorAnnotations} onChange={(event) => setShowColorAnnotations(event.target.checked)} /><span>Show grey lines and numbers on color preview</span></label>
         <div className="control-divider" /><div className="control-title"><span className="control-number">02</span><div><h4>Paper size</h4><p>For a perfect fit when you print.</p></div></div><div className="paper-options"><button className={settings.paperSize === 'a4' ? 'selected' : ''} onClick={() => changeSetting('paperSize', 'a4')}><span>A4</span><small>210 × 297 mm</small></button><button className={settings.paperSize === 'letter' ? 'selected' : ''} onClick={() => changeSetting('paperSize', 'letter')}><span>US Letter</span><small>8.5 × 11 in</small></button></div>
         <div className="control-note"><Sparkles size={16} /><span>Every number maps to a real Prismacolor Premier pencil.</span></div>
       </aside>

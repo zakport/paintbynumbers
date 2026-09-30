@@ -129,7 +129,7 @@ export function renderTemplate(result: TemplateResult, longEdge = 1600, darkness
   return canvas;
 }
 
-export function renderColorPreview(result: TemplateResult, longEdge = 1600, darkness = 50): HTMLCanvasElement {
+export function renderColorPreview(result: TemplateResult, longEdge = 1600, darkness = 50, showAnnotations = true): HTMLCanvasElement {
   const low = document.createElement('canvas');
   low.width = result.width;
   low.height = result.height;
@@ -151,9 +151,11 @@ export function renderColorPreview(result: TemplateResult, longEdge = 1600, dark
   ctx.imageSmoothingQuality = 'high';
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(low, 0, 0, canvas.width, canvas.height);
-  ctx.scale(canvas.width / result.width, canvas.height / result.height);
-  drawSmoothOutlines(ctx, result, darkness, true);
-  drawNumbers(ctx, result, darkness, true);
+  if (showAnnotations) {
+    ctx.scale(canvas.width / result.width, canvas.height / result.height);
+    drawSmoothOutlines(ctx, result, darkness, true);
+    drawNumbers(ctx, result, darkness, true);
+  }
   return canvas;
 }
 
@@ -174,7 +176,7 @@ export function downloadCanvas(canvas: HTMLCanvasElement, filename: string): Pro
   });
 }
 
-export async function downloadPdf(result: TemplateResult, paperSize: PaperSize, filename: string, darkness = 50): Promise<void> {
+export async function downloadPdf(result: TemplateResult, paperSize: PaperSize, filename: string, darkness = 50, showColorAnnotations = true): Promise<void> {
   const { jsPDF } = await import('jspdf');
   const size = paperSize === 'a4' ? [210, 297] : [215.9, 279.4];
   const landscape = result.width > result.height * 1.15;
@@ -207,7 +209,7 @@ export async function downloadPdf(result: TemplateResult, paperSize: PaperSize, 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
   doc.text('Each number on the template uses one Prismacolor Premier pencil.', 14, 26);
-  const preview = renderColorPreview(result, 1500, darkness);
+  const preview = renderColorPreview(result, 1500, darkness, showColorAnnotations);
   const previewScale = Math.min((keyWidth - 28) / result.width, 93 / result.height);
   const previewWidth = result.width * previewScale;
   const previewHeight = result.height * previewScale;

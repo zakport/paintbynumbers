@@ -145,6 +145,29 @@ test('grey darkness updates the numbered page without rebuilding regions', async
   await expect(page.locator('.processing-overlay')).toBeHidden();
 });
 
+test('color preview markings can be hidden and restored without changing the numbered page', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Try a sample' }).click();
+  await expect(page.locator('.region-badge')).toBeVisible();
+  await expect(page.locator('.processing-overlay')).toBeHidden();
+  const numberedPage = await page.getByRole('img', { name: 'Numbered pencil-by-number template' }).getAttribute('src');
+  await page.getByRole('tab', { name: 'Color preview' }).click();
+  const preview = page.getByRole('img', { name: 'Estimated finished color result' });
+  const annotated = await preview.getAttribute('src');
+  const toggle = page.getByRole('checkbox', { name: 'Show grey lines and numbers on color preview' });
+  await expect(toggle).toBeChecked();
+
+  await toggle.uncheck();
+  await expect(preview).not.toHaveAttribute('src', annotated!);
+  const clean = await preview.getAttribute('src');
+  await toggle.check();
+  await expect(preview).toHaveAttribute('src', annotated!);
+  expect(clean).not.toBe(annotated);
+  await page.getByRole('tab', { name: 'Numbered page' }).click();
+  await expect(page.getByRole('img', { name: 'Numbered pencil-by-number template' })).toHaveAttribute('src', numberedPage!);
+  await expect(page.locator('.processing-overlay')).toBeHidden();
+});
+
 test('a detail circle can be drawn and cleared on the photo', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
